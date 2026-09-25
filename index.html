@@ -236,13 +236,14 @@ small.okay{display:block}
 .imp{background:var(--surface);border:1.5px dashed var(--line);border-radius:14px;padding:14px 18px;margin:0 0 14px}
 .imp-head{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .imp-head p{margin:2px 0 0;max-width:60ch}
-.impgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin:12px 0}
+.impgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:12px 0}
 .impc{border:1.5px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;opacity:.6}
 .impc.on{opacity:1;border-color:var(--brand)}
 .impc label{display:flex;flex-direction:column;gap:3px;font-weight:600;font-size:13px}
 .impc input:not([type=checkbox]){height:38px;border:1.5px solid var(--line);border-radius:8px;padding:0 8px;font:500 15px var(--sans);background:var(--bg);color:var(--ink)}
 .impc small{color:var(--muted)}.impc small.warn{color:var(--warn-ink)}
-.impchk{flex-direction:row!important;align-items:center;gap:8px!important}
+.impchk{flex-direction:row!important;align-items:flex-start;gap:8px!important}
+.impchk .tag{white-space:normal;overflow-wrap:anywhere;font-size:12px;line-height:1.3;border-radius:8px}
 .impchk input{width:20px;height:20px}
 .impth{background:var(--mat);border-radius:8px;height:130px;display:grid;place-items:center;padding:8px}
 .impth svg{max-width:100%;max-height:114px}
@@ -285,6 +286,27 @@ a.mark:hover span{color:var(--brand)}
 .hrow select{min-width:130px}
 .hrow .iconbtn{margin-bottom:3px}
 .bagsum{margin:0;font-weight:600;color:var(--ink);background:var(--bg);border-left:3px solid var(--brand);padding:8px 10px;border-radius:6px}
+
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:14px}
+.gph{border:1.5px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;background:var(--surface)}
+.gph.main{border-color:var(--brand)}
+.gph .phbox{width:100%;height:120px}
+.gph .tag{align-self:flex-start;background:var(--brand);color:var(--brand-ink)}
+.gph .phcap{height:34px;border:1.5px solid var(--line);border-radius:8px;padding:0 8px;font:500 14px var(--sans);background:var(--bg);color:var(--ink);min-width:0}
+.phacts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.phacts .iconbtn{width:32px;height:32px}
+.phadd{border:2px dashed var(--line);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:180px;cursor:pointer;color:var(--brand);font-weight:600;text-align:center;padding:10px}
+.phadd:hover{border-color:var(--brand)}
+.phadd small{color:var(--muted);font-weight:400}
+.fpmain{border:0;background:none;padding:0;cursor:zoom-in;display:block;width:100%}
+.fp figure{position:relative}
+.fp figcaption:empty{display:none}
+.fpthumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.fpt{width:52px;height:52px;border:2px solid var(--line);border-radius:8px;background:#fff;padding:2px;cursor:pointer;display:grid;place-items:center}
+.fpt img{max-width:100%;max-height:100%}
+.fpt.on{border-color:var(--brand)}
+dialog.viewer img{max-width:86vw;max-height:72vh}
+.vcap{margin:8px 0 0;color:#333}
 .dlgin{width:100%;height:44px;border:1.5px solid #ccd;border-radius:8px;padding:0 10px;font:500 16px var(--sans);margin:4px 0}
 </style>
 </head>
@@ -1009,7 +1031,17 @@ const ckFor = pid => CK[pid] || {};
 const baseOf = id => PRODS.find(p => p.id === id);
 const prodOf = id => { const b = baseOf(id); return b ? E.applyOverrides(b, ovFor(id)) : null; };
 const openChecks = prod => E.checksOf(prod).filter(c => !ckFor(prod.id)[c.key]);
-const photoSrc = p => p && p.photo && p.photo.url ? p.photo.url : (p && E.photo(p) ? E.photo(p).src : '');
+const photoItemUrl = it => it ? (it.url || (it.asset ? '/_blob/' + it.asset : '')) : '';
+function photosOf(p){
+  if (!p) return [];
+  const builtin = E.photo(p) ? E.photo(p).src : '';
+  if (Array.isArray(p.photos)) return p.photos.map(it => it.builtin ? (builtin ? Object.assign({}, it, {url: builtin}) : null) : it).filter(it => it && photoItemUrl(it));
+  if (p.photo && photoItemUrl(p.photo)) return [p.photo];
+  return builtin ? [{builtin: true, url: builtin}] : [];
+}
+const photoSrc = p => { const l = photosOf(p); return l.length ? photoItemUrl(l[0]) : ''; };
+async function dropPhoto(it){ const key = it && !it.builtin && (it.asset || it.path); if (key && assetsNs) { try { await assetsNs.delete(key); } catch(e){} } }
+let photoIdx = 0;
 const editing = () => editMode && canWrite && !!db;
 
 /* ---------- Supabase backend ---------- */
@@ -1191,7 +1223,7 @@ function renderTop(){
 }
 function askLeave(next){
   confirmDialog('Leave without saving?', 'What you entered in this form will be lost.', 'Leave form', async () => {
-    if (draft && draft.newPhoto && assetsNs) { try { await assetsNs.delete(draft.newPhoto.path); } catch(e){} }
+    if (draft) for (const it of (draft.addedPhotos || [])) await dropPhoto(it);
     view = 'product'; draft = null; next();
   }, false);
 }
@@ -1240,7 +1272,7 @@ const homeLink = document.getElementById('homeLink');
 if (homeLink) homeLink.addEventListener('click', e => { e.preventDefault(); goHome(); });
 function choose(id){
   q.value = ''; q.blur(); drop.classList.remove('open'); catFilter = null;
-  const go = () => { curId = id; sel = null; form = null; confirming = null; render(); window.scrollTo({top:0}); };
+  const go = () => { curId = id; sel = null; photoIdx = 0; form = null; confirming = null; render(); window.scrollTo({top:0}); };
   if (view === 'productForm') return askLeave(go);
   go();
 }
@@ -1391,9 +1423,9 @@ function parseNum(str){
 const dimStr = d => d ? E.fmt(d).replace(/"$/, '').replace(/ cm$/, '') : '';
 function emptyPiece(unit){ return {id: 'p' + rid(), name:'', shape:'rect', w:{s:'',u:unit}, h:{s:'',u:unit}, params:{}, handles:[], cuts:[{m:'kitenge', q:'1'}], note:'', flag:''}; }
 function toDraft(p){
-  if (!p) return {mode:'new', name:'', category:'', unit:'in', source:'', photo:null, newPhoto:null,
+  if (!p) return {mode:'new', name:'', category:'', unit:'in', source:'', photos:[], addedPhotos:[], removedPhotos:[],
     pieces:[emptyPiece('in')], sub:[], flags:[], materials:{}, errors:[]};
-  return {mode:'edit', id:p.id, name:p.name, category:p.category, unit:p.unit, source:p.source || '', photo:p.photo || null, newPhoto:null,
+  return {mode:'edit', id:p.id, name:p.name, category:p.category, unit:p.unit, source:p.source || '', photos: photosOf(p).map(it => Object.assign({}, it)), addedPhotos:[], removedPhotos:[],
     pieces: p.pieces.map(x => {
       const params = {};
       (SHAPES[x.shape.type] || SHAPES.rect).params.forEach(([k]) => { if (x.shape[k]) params[k] = {s: dimStr(x.shape[k]), u: x.shape[k].u}; });
@@ -1498,7 +1530,6 @@ function pieceCardHTML(dp, i){
 }
 function productFormHTML(){
   const d = draft, cats = [...new Set(PRODS.map(p => p.category))].sort();
-  const ph = d.newPhoto ? d.newPhoto.url : d.photo && d.photo.url ? d.photo.url : (d.mode === 'edit' ? photoSrc(baseOf(d.id)) : '');
   return `<div class="formhead"><h1>${d.mode === 'new' ? 'New product' : 'Edit product: ' + esc(d.name)}</h1>
     <p class="muted">Enter the numbers written on the product sheet. Drawing size in the PPT is not used.${d.mode === 'edit' ? ' Saving replaces the original values. Value changes already made on single pieces stay on top.' : ''}</p></div>
   ${d.errors.length ? `<div class="flag" role="alert"><b>Please fix before saving</b><ul>${d.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
@@ -1509,11 +1540,19 @@ function productFormHTML(){
       <label><span>Main unit (grid and PDF)</span><select data-b="unit"><option value="in" ${d.unit==='in'?'selected':''}>inch</option><option value="cm" ${d.unit==='cm'?'selected':''}>cm</option></select></label>
       <label><span>Source (optional)</span><input data-b="source" value="${esc(d.source)}" placeholder="e.g. Sample Kit slide 29"></label>
     </div>
-    <div class="photoRow">
-      <div class="phbox">${ph ? `<img src="${ph}" alt="Finished product">` : '<span class="muted small">No photo</span>'}</div>
-      <div><label class="btn sec sm filebtn">${ph ? 'Replace photo' : 'Add finished product photo'}<input type="file" id="photoIn" accept="image/png,image/jpeg,image/webp" hidden></label>
-      <p class="muted small" id="phst">${assetsNs ? 'JPG or PNG. Large photos are resized automatically.' : 'Photo upload is not available in this view.'}</p></div>
+    <div class="gal">
+      ${d.photos.map((it, i) => `<div class="gph ${i === 0 ? 'main' : ''}">
+        <div class="phbox"><img src="${photoItemUrl(it)}" alt="Photo ${i + 1}"></div>
+        ${i === 0 ? '<span class="tag">Main photo</span>' : `<button type="button" class="linkbtn" data-phmain="${i}">Make main</button>`}
+        <input class="phcap" data-phcap="${i}" value="${esc(it.caption || '')}" placeholder="Caption (optional)" aria-label="Caption for photo ${i + 1}">
+        <div class="phacts">
+          ${i > 0 ? `<button type="button" class="iconbtn" data-phmv="${i}.-1" aria-label="Move left">&larr;</button>` : ''}
+          ${i < d.photos.length - 1 ? `<button type="button" class="iconbtn" data-phmv="${i}.1" aria-label="Move right">&rarr;</button>` : ''}
+          <button type="button" class="linkbtn danger" data-phrm="${i}">Remove</button>
+        </div></div>`).join('')}
+      <label class="phadd filebtn"><span>+ Add photos</span><small>You can pick several at once</small><input type="file" id="photoIn" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
     </div>
+    <p class="muted small" id="phst">${assetsNs ? 'The first photo is the main photo, used on the home page and the PDF cover. Large photos are resized automatically.' : 'Photo upload is not available in this view.'}</p>
   </section>
   <section class="fsec"><h2 class="sech">Pieces (${d.pieces.length})</h2>
     ${importHTML()}
@@ -1589,20 +1628,33 @@ function wireForm(){
   on('[data-rmflag]', el => { draft.flags.splice(+el.dataset.rmflag, 1); });
   const pin = $('#photoIn');
   if (pin) pin.onchange = async () => {
-    const f = pin.files && pin.files[0]; if (!f) return;
+    const files = [...(pin.files || [])]; if (!files.length) return;
     const st = $('#phst');
     if (!assetsNs) { st.textContent = 'Photo upload is not available in this view.'; return; }
-    st.textContent = 'Uploading...';
-    try {
-      const blob = await shrink(f);
-      const r = await assetsNs.upload(blob);
-      if (draft.newPhoto) { try { await assetsNs.delete(draft.newPhoto.path); } catch(e){} }
-      draft.newPhoto = {path: r.path, url: r.url};
-      renderForm();
-    } catch(e) { st.textContent = 'Upload failed. Try a JPG or PNG file under 20 MB.'; }
+    let ok = 0, fail = 0;
+    for (let i = 0; i < files.length; i++) {
+      st.textContent = `Uploading ${i + 1} of ${files.length}...`;
+      try {
+        const blob = await shrink(files[i]);
+        const r = await assetsNs.upload(blob, {type: 'image/jpeg'});
+        const it = {url: r.url}; if (r.id) it.asset = r.id; if (r.path) it.path = r.path;
+        draft.photos.push(it); draft.addedPhotos.push(it); ok++;
+      } catch(e) { fail++; }
+    }
+    renderForm();
+    const st2 = $('#phst'); if (st2 && fail) st2.textContent = `${ok} uploaded, ${fail} failed. Use JPG or PNG files under 20 MB.`;
   };
+  app.querySelectorAll('[data-phcap]').forEach(el => el.oninput = () => { draft.photos[+el.dataset.phcap].caption = el.value; });
+  app.querySelectorAll('[data-phmain]').forEach(el => el.onclick = () => { const i = +el.dataset.phmain; const [it] = draft.photos.splice(i, 1); draft.photos.unshift(it); renderForm(); });
+  app.querySelectorAll('[data-phmv]').forEach(el => el.onclick = () => { const [i, dir] = el.dataset.phmv.split('.').map(Number), a = draft.photos; [a[i], a[i + dir]] = [a[i + dir], a[i]]; renderForm(); });
+  app.querySelectorAll('[data-phrm]').forEach(el => el.onclick = () => {
+    const [it] = draft.photos.splice(+el.dataset.phrm, 1);
+    const k = draft.addedPhotos.indexOf(it);
+    if (k >= 0) { draft.addedPhotos.splice(k, 1); dropPhoto(it); } else draft.removedPhotos.push(it);
+    renderForm();
+  });
   $('[data-fcancel]').onclick = async () => {
-    if (draft.newPhoto && assetsNs) { try { await assetsNs.delete(draft.newPhoto.path); } catch(e){} }
+    for (const it of draft.addedPhotos) await dropPhoto(it);
     const back = draft.mode === 'edit' ? draft.id : curId;
     view = 'product'; draft = null; curId = back && baseOf(back) ? back : null; render();
   };
@@ -1684,13 +1736,18 @@ function buildProduct(){
   Object.keys(materials).forEach(k => { if (!used.has(k)) delete materials[k]; });
   const product = {id: d.id || slug(d.name) + '-' + rid().slice(0, 4), name: d.name.trim(), category: d.category.trim(), unit: d.unit,
     source: d.source.trim(), status: 'draft', pieces: pieces.filter(Boolean), sub, flags, materials};
-  if (d.newPhoto) product.photo = {path: d.newPhoto.path, url: d.newPhoto.url}; else if (d.photo) product.photo = d.photo;
+  product.photos = d.photos.map(it => {
+    const o = it.builtin ? {builtin: true} : {url: it.url};
+    if (it.asset) o.asset = it.asset; if (it.path) o.path = it.path; if (it.caption && it.caption.trim()) o.caption = it.caption.trim();
+    return o;
+  });
+  const first = product.photos.find(it => !it.builtin); if (first) product.photo = first;
   return {errs: [...new Set(errs)], product};
 }
 async function saveProduct(){
   const {errs, product} = buildProduct();
   if (errs.length) { draft.errors = errs; renderForm(); window.scrollTo({top:0}); return; }
-  const oldPhoto = draft.mode === 'edit' && draft.newPhoto && draft.photo ? draft.photo.path : null;
+  const removed = draft.removedPhotos.slice();
   const by = await me(), at = new Date().toISOString();
   product.updatedBy = by; product.updatedAt = at;
   product.createdAt = draft.createdAt || at; product.createdBy = draft.createdBy || by;
@@ -1700,7 +1757,7 @@ async function saveProduct(){
     await addLog(product.id, mode === 'new' ? `Product created with ${product.pieces.length} pieces` : 'Product details edited');
   });
   if (!ok) return;
-  if (oldPhoto && assetsNs) { try { await assetsNs.delete(oldPhoto); } catch(e){} }
+  for (const it of removed) await dropPhoto(it);
   const idx = PRODS.findIndex(p => p.id === product.id);
   PRODS = idx >= 0 ? PRODS.map(p => p.id === product.id ? product : p) : PRODS.concat([product]);
   Object.entries(product.materials).forEach(([k, m]) => { if (!E.MAT[k]) E.MAT[k] = m; });
@@ -1713,20 +1770,23 @@ function importHTML(){
   const im = draft.imp;
   const intro = `<div class="imp-head"><div><b>Import shapes from a pattern file</b>
       <p class="muted small">PDF or Illustrator (.ai) file drawn at 1:1. Outlines and labels (like "Main body X2") are read from the file. You add the materials.</p></div>
-      <label class="btn sec sm filebtn">${im ? 'Choose another file' : 'Choose PDF or AI file'}<input type="file" id="impIn" accept=".pdf,.ai,application/pdf,application/postscript" hidden></label></div>`;
+      <label class="btn sec sm filebtn">${im ? 'Add more files' : 'Choose PDF or AI files'}<input type="file" id="impIn" accept=".pdf,.ai,application/pdf,application/postscript" multiple hidden></label></div>`;
   if (!im) return `<div class="imp">${intro}</div>`;
-  if (im.loading) return `<div class="imp">${intro}<p class="muted">Reading ${esc(im.file)}...</p></div>`;
-  if (im.err) return `<div class="imp">${intro}<p class="ferr">${esc(im.err)}</p></div>`;
-  const groups = [...new Set(im.cands.map(c => c.group).filter(Boolean))];
+  if (im.loading) return `<div class="imp">${intro}<p class="muted">${esc(im.loading)}</p></div>`;
+  const errHTML = (im.errs || []).length ? `<div class="ferr">${im.errs.map(e => `<div>${esc(e)}</div>`).join('')}</div>` : '';
+  if (!im.cands.length) return `<div class="imp">${intro}${errHTML}</div>`;
+  const multi = (im.files || []).length > 1;
+  const groups = [...new Set(im.cands.map(c => (multi ? c.file + (c.group ? ' / ' + c.group : '') : c.group)).filter(Boolean))];
+  const gkey = c => multi ? c.file + (c.group ? ' / ' + c.group : '') : c.group;
   const k = im.scale / 100, nSel = im.cands.filter(c => c.sel).length;
   const sz = c => `${(c.wIn*k*2.54).toFixed(1)} x ${(c.hIn*k*2.54).toFixed(1)} cm  (${(c.wIn*k).toFixed(2)} x ${(c.hIn*k).toFixed(2)} in)`;
   return `<div class="imp">${intro}
-    <p><b>${im.cands.length} shape${im.cands.length === 1 ? '' : 's'} found in ${esc(im.file)}.</b> Tick the pieces that belong to this product.</p>
+    ${errHTML}<p><b>${im.cands.length} shape${im.cands.length === 1 ? '' : 's'} found in ${multi ? (im.files.length + ' files') : esc(im.files[0])}.</b> Tick the pieces that belong to this product.</p>
     ${groups.length > 1 ? `<div class="row">${groups.map(g => `<button type="button" class="btn sec sm" data-impgrp="${esc(g)}">Only ${esc(g)}</button>`).join('')}<button type="button" class="btn sec sm" data-impgrp="">All</button></div>` : ''}
     <div class="impgrid">${im.cands.map((c, i) => {
       const pv = {id:'i'+i, name:c.name, w:{v:c.wIn*k, u:'in'}, h:{v:c.hIn*k, u:'in'}, shape:{type:'custom', pts:c.pts}, cuts:[['kitenge',1]]};
       return `<div class="impc ${c.sel ? 'on' : ''}">
-        <label class="impchk"><input type="checkbox" data-impsel="${i}" ${c.sel ? 'checked' : ''}> ${c.group ? `<span class="tag">${esc(c.group)}</span>` : ''}</label>
+        <label class="impchk"><input type="checkbox" data-impsel="${i}" ${c.sel ? 'checked' : ''}> ${gkey(c) ? `<span class="tag">${esc(gkey(c))}</span>` : ''}</label>
         <div class="impth">${E.svg(pv, 'cm', {grid:false, pad:0.15})}</div>
         <label><span>Name</span><input data-impname="${i}" value="${esc(c.name)}" placeholder="Piece name"></label>
         <label><span>Quantity</span><input class="qty" data-impqty="${i}" value="${esc(c.qty == null ? '' : c.qty)}" inputmode="numeric" placeholder="?"></label>
@@ -1742,8 +1802,11 @@ function wireImport(){
   const app = $('#app');
   const inp = $('#impIn');
   if (inp) inp.onchange = async () => {
-    const f = inp.files && inp.files[0]; if (!f) return;
-    draft.imp = {file: f.name, loading: true, cands: [], scale: 100}; renderForm();
+    const files = [...(inp.files || [])]; if (!files.length) return;
+    const prev = draft.imp && draft.imp.cands ? draft.imp : {files: [], cands: [], scale: 100, errs: []};
+    draft.imp = Object.assign({}, prev, {loading: 'Reading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '...'}); renderForm();
+    const out = {files: prev.files.slice(), cands: prev.cands.slice(), scale: prev.scale || 100, errs: []};
+    for (const f of files) {
     try {
       const buf = new Uint8Array(await f.arrayBuffer());
       const head = String.fromCharCode.apply(null, buf.slice(0, 1024));
@@ -1753,18 +1816,21 @@ function wireImport(){
       const lib = await loadPdfjs();
       const r = await window.PatternImport.importPDF(lib, buf);
       if (!r.candidates.length) throw {user: 'No closed outlines were found. Check that the pattern lines are vector paths (not a scanned image) and that each piece is one closed line.'};
-      draft.imp = {file: f.name, scale: 100, cands: r.candidates.map(c => ({
-        group: c.group, name: c.name, qty: c.qty, wIn: c.wIn, hIn: c.hIn, outer: c.outer, sel: !c.outer,
-        pts: c.norm.map(([u, v]) => u + ',' + v).join(' ')}))};
+      if (!out.files.includes(f.name)) out.files.push(f.name);
+      r.candidates.forEach(c => out.cands.push({file: f.name, group: c.group, name: c.name, qty: c.qty, wIn: c.wIn, hIn: c.hIn, outer: c.outer, sel: !c.outer,
+        pts: c.norm.map(([u, v]) => u + ',' + v).join(' ')}));
     } catch(e) {
-      draft.imp = {file: f.name, scale: 100, cands: [], err: (e && e.user) || 'The file could not be read. It may be damaged or password-protected.'};
+      out.errs.push(f.name + ': ' + ((e && e.user) || 'the file could not be read. It may be damaged or password-protected.'));
     }
+    }
+    draft.imp = out;
     renderForm();
   };
   app.querySelectorAll('[data-impsel]').forEach(el => el.onchange = () => { draft.imp.cands[+el.dataset.impsel].sel = el.checked; renderForm(); });
   app.querySelectorAll('[data-impname]').forEach(el => el.oninput = () => { draft.imp.cands[+el.dataset.impname].name = el.value; });
   app.querySelectorAll('[data-impqty]').forEach(el => el.oninput = () => { draft.imp.cands[+el.dataset.impqty].qty = el.value; });
-  app.querySelectorAll('[data-impgrp]').forEach(el => el.onclick = () => { const g = el.dataset.impgrp; draft.imp.cands.forEach(c => { c.sel = !c.outer && (!g || c.group === g); }); renderForm(); });
+  app.querySelectorAll('[data-impgrp]').forEach(el => el.onclick = () => { const g = el.dataset.impgrp, multi = draft.imp.files.length > 1;
+    draft.imp.cands.forEach(c => { const key = multi ? c.file + (c.group ? ' / ' + c.group : '') : c.group; c.sel = !c.outer && (!g || key === g); }); renderForm(); });
   const sc = app.querySelector('[data-impscale]');
   if (sc) sc.onchange = () => { const v = parseNum(sc.value); draft.imp.scale = v > 0 ? v : 100; renderForm(); };
   const cl = app.querySelector('[data-impclose]'); if (cl) cl.onclick = () => { draft.imp = null; renderForm(); };
@@ -1776,11 +1842,12 @@ function wireImport(){
     draft.pieces = draft.pieces.filter(dp => !blank(dp));
     im.cands.filter(c => c.sel).forEach(c => {
       const q = parseInt(c.qty, 10);
-      draft.pieces.push({id: 'p' + rid(), name: c.name || '', shape: 'custom', pts: c.pts, src: im.file,
+      draft.pieces.push({id: 'p' + rid(), name: c.name || '', shape: 'custom', pts: c.pts, src: c.file,
         w: {s: val(c.wIn * k), u}, h: {s: val(c.hIn * k), u}, params: {},
         cuts: [{m: 'kitenge', q: q > 0 ? String(q) : ''}], note: '', flag: q > 0 ? '' : 'Quantity was not written in the file.'});
     });
-    const msg = `Shapes imported from ${im.file}${im.scale !== 100 ? ' at ' + im.scale + '%' : ''}: print one piece and check it with a ruler before cutting.`;
+    const used = [...new Set(im.cands.filter(c => c.sel).map(c => c.file))];
+    const msg = `Shapes imported from ${used.join(', ')}${im.scale !== 100 ? ' at ' + im.scale + '%' : ''}: print one piece and check it with a ruler before cutting.`;
     if (!draft.flags.includes(msg)) draft.flags.push(msg);
     draft.imp = null; renderForm();
   };
@@ -1843,6 +1910,7 @@ function render(){
   if (sel && !piece) sel = null;
   const ck = ckFor(prod.id), all = E.checksOf(prod), open = all.filter(c => !ck[c.key]);
   const tot = totals(prod), dlOk = !!downloads, src = photoSrc(prod), ed = editing();
+  const pics = photosOf(prod), pi = Math.min(photoIdx, Math.max(0, pics.length - 1));
   const logs = LOG.filter(l => l.pid === prod.id).slice(0, 12);
 
   app.innerHTML = `
@@ -1884,7 +1952,11 @@ function render(){
       ${piece ? detailHTML(prod, piece, ck, ed, dlOk) : `<section class="detail"><p class="note" style="margin:0">Select a piece on the mat or in the list to see its size, cut quantity, and notes.</p></section>`}
     </div>
     <aside class="side">
-      ${src?`<h3>Finished product</h3><div class="fp"><figure><img src="${src}" alt="${esc(prod.name)} finished product"></figure></div>`:''}
+      ${pics.length ? `<h3>Finished product${pics.length > 1 ? ` <small class="muted">${pics.length} photos</small>` : ''}</h3><div class="fp">
+        <figure><button class="fpmain" id="fpOpen" aria-label="Enlarge photo"><img id="fpImg" src="${photoItemUrl(pics[pi])}" alt="${esc(prod.name)} photo ${pi + 1}"></button>
+        <figcaption id="fpCap">${esc(pics[pi].caption || '')}</figcaption></figure>
+        ${pics.length > 1 ? `<div class="fpthumbs">${pics.map((it, i) => `<button class="fpt ${i === pi ? 'on' : ''}" data-ph="${i}" aria-label="Photo ${i + 1}${it.caption ? ': ' + esc(it.caption) : ''}"><img src="${photoItemUrl(it)}" alt=""></button>`).join('')}</div>` : ''}
+      </div>` : ''}
       <h3>Pieces</h3>
       <ul class="plist">${prod.pieces.map(p=>`<li><button class="pbtn" data-pid="${p.id}" aria-current="${p.id===sel}">
         <span class="thumb">${E.svg(p, prod.unit, {grid:false, pad:0.2})}</span>
@@ -1952,9 +2024,9 @@ function detailHTML(prod, piece, ck, ed, dlOk){
 }
 
 async function photoData(prod){
-  const url = photoSrc(prod); if (!url || !(prod.photo && prod.photo.url)) return null;
+  const it = photosOf(prod)[0]; if (!it || it.builtin) return null;   // built-in photos are already inside the page
   try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const img = await new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = rej; i.src = photoItemUrl(it); });
     const k = Math.min(1, 600 / Math.max(img.width, img.height));
     const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
@@ -1975,15 +2047,26 @@ function wire(prod, piece, open, all){
   });
   const bh = $('#backHome'); if (bh) bh.onclick = (e) => { e.preventDefault(); goHome(); };
   const ep = $('#editProd'); if (ep) ep.onclick = () => openProductForm(baseOf(prod.id));
-  const z = $('#zoom');
-  if (z) z.onclick = () => {
-    const d = document.createElement('dialog');
-    d.innerHTML = `<img src="${photoSrc(prod)}" alt="${esc(prod.name)} finished product"><button class="btn sec">Close</button>`;
-    document.body.appendChild(d); d.showModal();
-    d.querySelector('button').onclick = () => d.close();
+  const openViewer = (start) => {
+    const pics = photosOf(prod); if (!pics.length) return;
+    let k = start;
+    const d = document.createElement('dialog'); d.className = 'viewer';
+    const draw = () => { d.innerHTML = `<img src="${photoItemUrl(pics[k])}" alt="${esc(prod.name)} photo ${k + 1}">
+      <p class="vcap">${esc(pics[k].caption || '')}${pics.length > 1 ? ` <span class="muted">(${k + 1} / ${pics.length})</span>` : ''}</p>
+      <div class="row">${pics.length > 1 ? '<button class="btn sec" data-v="-1">&larr; Previous</button><button class="btn sec" data-v="1">Next &rarr;</button>' : ''}<button class="btn sec" data-v="0">Close</button></div>`;
+      d.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { const v = +b.dataset.v; if (!v) { d.close(); return; } k = (k + v + pics.length) % pics.length; draw(); }); };
+    draw(); document.body.appendChild(d); d.showModal();
+    d.addEventListener('keydown', e => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { k = (k + (e.key === 'ArrowRight' ? 1 : -1) + pics.length) % pics.length; draw(); } });
     d.addEventListener('close', () => d.remove());
     d.addEventListener('click', e => { if (e.target === d) d.close(); });
   };
+  const z = $('#zoom'); if (z) z.onclick = () => openViewer(0);
+  const fo = $('#fpOpen'); if (fo) fo.onclick = () => openViewer(Math.min(photoIdx, photosOf(prod).length - 1));
+  app.querySelectorAll('[data-ph]').forEach(b => b.onclick = () => {
+    photoIdx = +b.dataset.ph; const it = photosOf(prod)[photoIdx];
+    $('#fpImg').src = photoItemUrl(it); $('#fpCap').textContent = it.caption || '';
+    app.querySelectorAll('[data-ph]').forEach(x => x.classList.toggle('on', x === b));
+  });
   app.querySelectorAll('[data-do]').forEach(b => b.onclick = async () => {
     const act = b.dataset.do;
     if (act === 'ask') { confirming = b.dataset.key; render(); const n = $('#cnote'); if (n) n.focus(); return; }
