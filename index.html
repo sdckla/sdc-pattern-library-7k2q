@@ -898,34 +898,80 @@ const editing = () => editMode && canWrite && !!db;
 const CFG = window.PATTERN_CONFIG || {};
 const TABLE = 'docs', BUCKET = 'photos';
 let sb = null, configMissing = false;
-const listeners = [];
 function makeDb(){
   const url = (CFG.supabaseUrl || '').trim(), key = (CFG.supabaseKey || '').trim();
   if (!url || !key || /PASTE/i.test(url + key)) { configMissing = true; return null; }
   if (!window.supabase) return null;
   sb = window.supabase.createClient(url, key);
-  let timer = null;
-  const reloadAll = () => { clearTimeout(timer); timer = setTimeout(() => listeners.forEach(l => l()), 300); };
-  sb.channel('docs-changes').on('postgres_changes', {event: '*', schema: 'public', table: TABLE}, reloadAll).subscribe();
-  setInterval(() => listeners.forEach(l => l()), 60000);
+  /* Data use is kept low: each browser keeps a copy of the data, asks the server only
+     "what changed since last time" (a few KB), and downloads only the changed rows. */
+  const CACHE = 'patternlib.cache.v1.';
+  const caches = {}, subs = {};
+  const cacheOf = name => {
+    if (!caches[name]) {
+      let m = new Map();
+      try { const raw = localStorage.getItem(CACHE + name); if (raw) m = new Map(JSON.parse(raw)); } catch(e) {}
+      caches[name] = m;
+    }
+    return caches[name];
+  };
+  const save = name => { try { localStorage.setItem(CACHE + name, JSON.stringify([...cacheOf(name)])); } catch(e) {} };
+  const emit = name => (subs[name] || []).forEach(f => f());
+  const headLimit = {log: 300};
+  async function sync(name){
+    let q = sb.from(TABLE).select('id,updated_at').eq('collection', name);
+    if (headLimit[name]) q = q.order('updated_at', {ascending: false}).limit(headLimit[name]);
+    const {data: heads, error} = await q;
+    if (error) throw error;
+    const m = cacheOf(name), seen = new Set(), need = [];
+    heads.forEach(h => { seen.add(h.id); const c = m.get(h.id); if (!c || c.updated_at !== h.updated_at) need.push(h.id); });
+    [...m.keys()].forEach(id => { if (!seen.has(id)) m.delete(id); });
+    for (let i = 0; i < need.length; i += 100) {
+      const {data, error: e2} = await sb.from(TABLE).select('id,data,updated_at').eq('collection', name).in('id', need.slice(i, i + 100));
+      if (e2) throw e2;
+      data.forEach(r => m.set(r.id, {data: r.data, updated_at: r.updated_at}));
+    }
+    save(name); emit(name);
+  }
+  const syncAll = () => Object.keys(subs).forEach(n => sync(n).catch(() => {}));
+  sb.channel('docs-changes').on('postgres_changes', {event: '*', schema: 'public', table: TABLE}, p => {
+    const row = p.eventType === 'DELETE' ? p.old : p.new;
+    if (!row || !row.collection || !subs[row.collection]) { syncAll(); return; }
+    const m = cacheOf(row.collection);
+    if (p.eventType === 'DELETE') m.delete(row.id);
+    else if (row.data === undefined) { sync(row.collection).catch(() => {}); return; }
+    else m.set(row.id, {data: row.data, updated_at: row.updated_at});
+    save(row.collection); emit(row.collection);
+  }).subscribe();
+  setInterval(syncAll, 5 * 60 * 1000);                       // light "anything new?" check
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncAll(); });
   function collection(name, opts){
     opts = opts || {};
     return {
       doc: id => ({
-        set: async data => { const {error} = await sb.from(TABLE).upsert({collection: name, id, data, updated_at: new Date().toISOString()}); if (error) throw error; },
-        delete: async () => { const {error} = await sb.from(TABLE).delete().eq('collection', name).eq('id', id); if (error) throw error; },
+        set: async data => {
+          const updated_at = new Date().toISOString();
+          const {error} = await sb.from(TABLE).upsert({collection: name, id, data, updated_at});
+          if (error) throw error;
+          cacheOf(name).set(id, {data, updated_at}); save(name); emit(name);
+        },
+        delete: async () => {
+          const {error} = await sb.from(TABLE).delete().eq('collection', name).eq('id', id);
+          if (error) throw error;
+          cacheOf(name).delete(id); save(name); emit(name);
+        },
       }),
       orderBy: () => collection(name, Object.assign({}, opts, {newest: true})),
       limit: n => collection(name, Object.assign({}, opts, {limit: n})),
       onSnapshot(cb, err){
-        const load = async () => {
-          let q = sb.from(TABLE).select('id,data,updated_at').eq('collection', name);
-          if (opts.newest) q = q.order('updated_at', {ascending: false});
-          const {data, error} = await q.limit(opts.limit || 5000);
-          if (error) { if (err) err(error); return; }
-          cb({docs: data.map(r => ({id: r.id, data: () => r.data}))});
+        const deliver = () => {
+          let rows = [...cacheOf(name)].map(([id, v]) => ({id, data: v.data, updated_at: v.updated_at}));
+          if (opts.newest) rows.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+          cb({docs: rows.slice(0, opts.limit || 100000).map(r => ({id: r.id, data: () => r.data}))});
         };
-        listeners.push(load); load();
+        (subs[name] = subs[name] || []).push(deliver);
+        if (cacheOf(name).size) deliver();                    // show the saved copy at once
+        sync(name).catch(e => { if (err) err(e); });
       },
     };
   }
@@ -952,7 +998,7 @@ downloads = {
   const d = makeDb();
   db = d; if (!d) { dbState = 'none'; return; }
   assetsNs = storageApi; canWrite = true;
-  const err = () => { if (dbState !== 'ok') { dbState = 'none'; refresh(); } };
+  const err = () => { if (dbState !== 'ok') { dbState = 'none'; refresh(); } };  // keeps the saved copy if one is already shown
   d.collection('products').onSnapshot(s => {
     const list = s.docs.map(x => x.data()).filter(p => p && p.id && Array.isArray(p.pieces));
     list.forEach(p => Object.entries(p.materials || {}).forEach(([k, m]) => { if (!E.MAT[k]) E.MAT[k] = m; }));
@@ -1404,10 +1450,10 @@ async function shrink(file){
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    const k = Math.min(1, 1200 / Math.max(img.width, img.height));
+    const k = Math.min(1, 800 / Math.max(img.width, img.height));
     const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
-    return await new Promise(res => c.toBlob(res, 'image/jpeg', 0.88));
+    return await new Promise(res => c.toBlob(res, 'image/jpeg', 0.85));
   } finally { URL.revokeObjectURL(url); }
 }
 function buildProduct(){
