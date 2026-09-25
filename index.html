@@ -278,6 +278,13 @@ a.mark:hover span{color:var(--brand)}
 .pcard .pn{font-weight:600;line-height:1.25}
 .pcard small{color:var(--muted)}
 @media (max-width:600px){.pcard .im{height:130px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.catnav{top:calc(env(safe-area-inset-top,0px) + 108px)}}
+
+.handles{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.hrow{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;background:var(--bg);border-radius:10px;padding:8px 10px;width:100%}
+.hrow label{display:flex;flex-direction:column;gap:4px;font-weight:600;font-size:14px;min-width:150px}
+.hrow select{min-width:130px}
+.hrow .iconbtn{margin-bottom:3px}
+.bagsum{margin:0;font-weight:600;color:var(--ink);background:var(--bg);border-left:3px solid var(--brand);padding:8px 10px;border-radius:6px}
 .dlgin{width:100%;height:44px;border:1.5px solid #ccd;border-radius:8px;padding:0 10px;font:500 16px var(--sans);margin:4px 0}
 </style>
 </head>
@@ -420,6 +427,84 @@ a.mark:hover span{color:var(--brand)}
     },
   ];
 
+
+  /* ---------- bag body with handles/tabs ("bagBody") ---------- */
+  // shape: {type:'bagBody', tw, bw, bh, r?, ri?, handles:[{pos:'left'|'right'|'center'|'x', x?, w, h}]}
+  function bagParts(s) {
+    const tw = toIn(s.tw), bw = toIn(s.bw), bh = toIn(s.bh);
+    const W = Math.max(tw, bw), tx0 = (W - tw) / 2, tx1 = tx0 + tw, bx0 = (W - bw) / 2, bx1 = bx0 + bw;
+    const hs = (s.handles || []).map((h) => {
+      const w = toIn(h.w), hh = toIn(h.h);
+      let x = h.pos === 'right' ? tw - w : h.pos === 'center' ? (tw - w) / 2 : h.pos === 'x' ? toIn(h.x || {v: 0, u: 'in'}) : 0;
+      return {x0: tx0 + x, x1: tx0 + x + w, h: hh};
+    }).sort((a, b) => a.x0 - b.x0);
+    const H = bh + Math.max(0, ...hs.map((h) => h.h));
+    return {tw, bw, bh, W, H, tx0, tx1, bx0, bx1, hs};
+  }
+  function bagSize(s) { const b = bagParts(s); return {w: b.W, h: b.H}; }
+  function bagError(s) {
+    const b = bagParts(s), e = 1e-6;
+    if (!(b.tw > 0 && b.bw > 0 && b.bh > 0)) return 'enter the body top width, bottom width and height.';
+    for (let i = 0; i < b.hs.length; i++) {
+      const h = b.hs[i];
+      if (!(h.h > 0) || !(h.x1 - h.x0 > 0)) return 'every handle needs a width and a height.';
+      if (h.x0 < b.tx0 - e || h.x1 > b.tx1 + e) return 'a handle sticks out past the top of the body. Check its position and width.';
+      if (i && h.x0 < b.hs[i - 1].x1 - e) return 'two handles overlap. Check their positions and widths.';
+    }
+    const r = s.r ? toIn(s.r) : 0, ri = s.ri ? toIn(s.ri) : 0;
+    if (r * 2 > b.bw + e || r > b.bh + e) return 'the bottom corner radius is too big for the body.';
+    if (ri > 0) {
+      const gaps = []; let x = b.tx0;
+      b.hs.forEach((h) => { gaps.push(h.x0 - x); x = h.x1; }); gaps.push(b.tx1 - x);
+      const inner = gaps.slice(1, -1).filter((g) => g > e);
+      if (inner.some((g) => ri * 2 > g + e) || ri > b.bh + e) return 'the rounding between the handles is too big for the gap.';
+    }
+    return '';
+  }
+  function fillet(pts, radii, steps) {
+    const n = pts.length, out = [];
+    for (let i = 0; i < n; i++) {
+      const P = pts[i], r = radii[i] || 0;
+      if (r <= 0) { out.push(P); continue; }
+      const A = pts[(i - 1 + n) % n], B = pts[(i + 1) % n];
+      const la = Math.hypot(A[0] - P[0], A[1] - P[1]), lb = Math.hypot(B[0] - P[0], B[1] - P[1]);
+      const u = [(A[0] - P[0]) / la, (A[1] - P[1]) / la], v = [(B[0] - P[0]) / lb, (B[1] - P[1]) / lb];
+      const cos = Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1])), th = Math.acos(cos);
+      if (th < 1e-3 || Math.PI - th < 1e-3) { out.push(P); continue; }
+      let d = r / Math.tan(th / 2); d = Math.min(d, la * 0.999, lb * 0.999);
+      const rr = d * Math.tan(th / 2);
+      const bis = [u[0] + v[0], u[1] + v[1]], bl = Math.hypot(bis[0], bis[1]);
+      const C = [P[0] + bis[0] / bl * rr / Math.sin(th / 2), P[1] + bis[1] / bl * rr / Math.sin(th / 2)];
+      const T1 = [P[0] + u[0] * d, P[1] + u[1] * d], T2 = [P[0] + v[0] * d, P[1] + v[1] * d];
+      let a1 = Math.atan2(T1[1] - C[1], T1[0] - C[0]), a2 = Math.atan2(T2[1] - C[1], T2[0] - C[0]), da = a2 - a1;
+      while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+      for (let k = 0; k <= steps; k++) { const a = a1 + da * k / steps; out.push([C[0] + rr * Math.cos(a), C[1] + rr * Math.sin(a)]); }
+    }
+    return out;
+  }
+  function bagOutline(s) {
+    const b = bagParts(s), r = s.r ? toIn(s.r) : 0, ri = s.ri ? toIn(s.ri) : 0, e = 1e-6;
+    const pts = [], rad = [];
+    const add = (x, y, rr) => { const L = pts[pts.length - 1]; if (L && Math.abs(L[0] - x) < e && Math.abs(L[1] - y) < e) return; pts.push([x, y]); rad.push(rr || 0); };
+    add(b.bx0, 0, r); add(b.bx1, 0, r); add(b.tx1, b.bh, 0);
+    [...b.hs].reverse().forEach((h) => {
+      const flushR = Math.abs(h.x1 - b.tx1) < e, flushL = Math.abs(h.x0 - b.tx0) < e;
+      if (!flushR) add(h.x1, b.bh, ri);
+      add(h.x1, b.bh + h.h, 0); add(h.x0, b.bh + h.h, 0);
+      if (!flushL) add(h.x0, b.bh, ri);
+    });
+    add(b.tx0, b.bh, 0);
+    // drop points that sit on a straight line (e.g. a vertical side running into a flush handle)
+    const clean = [], cr = [];
+    for (let i = 0; i < pts.length; i++) {
+      const A = pts[(i - 1 + pts.length) % pts.length], P = pts[i], B = pts[(i + 1) % pts.length];
+      const cross = (P[0] - A[0]) * (B[1] - P[1]) - (P[1] - A[1]) * (B[0] - P[0]);
+      if (Math.abs(cross) < 1e-9 && !rad[i]) continue;
+      clean.push(P); cr.push(rad[i]);
+    }
+    return fillet(clean, cr, 12);
+  }
+
   /* ---------- geometry: polygon in inches, origin bottom-left, y up ---------- */
   function arc(cx, cy, r, a0, a1, n) {
     const pts = [];
@@ -450,6 +535,7 @@ a.mark:hover span{color:var(--brand)}
         const t = toIn(s.top), o = (w - t) / 2;
         return [[0, 0], [w, 0], [w - o, h], [o, h]];
       }
+      case 'bagBody': return bagOutline(s);
       case 'custom': {
         const raw = typeof s.pts === 'string' ? s.pts.trim().split(/\s+/).map((t) => t.split(',').map(Number)) : (s.pts || []);
         return raw.map(([u, v]) => [u * w, v * h]);
@@ -675,7 +761,7 @@ a.mark:hover span{color:var(--brand)}
   }
 
   const photo = (prod) => prod.photoData || ((typeof globalThis !== 'undefined' && globalThis.PatternPhotos) || {})[prod.id] || null;
-  const api = { mat, checksOf, applyOverrides, photo, PRODUCTS, MAT, outline, svg, buildPDF, fmt, toIn, cutText, sizeText };
+  const api = { bagSize, bagError, mat, checksOf, applyOverrides, photo, PRODUCTS, MAT, outline, svg, buildPDF, fmt, toIn, cutText, sizeText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.PatternEngine = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -864,8 +950,40 @@ const SHAPES = {
   notchBottom: {label:'Bottom corner cut-outs', params:[['nw','Cut-out width'],['nh','Cut-out height']]},
   trapezoid:   {label:'Trapezoid (narrow top)', params:[['top','Top width']]},
   hexagon:     {label:'Hexagon (pointed sides)', params:[['top','Top / bottom width']]},
+  bagBody:     {label:'Bag body with handles / tabs', params:[]},
   custom:      {label:'Imported shape (from file)', params:[]},
 };
+const BAG_FIELDS = [['tw','Body top width'],['bw','Body bottom width'],['bh','Body height'],['r','Bottom corner radius (blank = square)',true],['ri','Rounding between handles (blank = square)',true]];
+const HPOS = {left:'Left edge', right:'Right edge', center:'Centered', x:'Set position'};
+function getPath(o, path){ return path.split('.').reduce((a, k) => (a == null ? a : a[/^\d+$/.test(k) ? +k : k]), o); }
+function setPathObj(o, path, val){ const ks = path.split('.'); let t = o; for (let i = 0; i < ks.length - 1; i++) { const k = /^\d+$/.test(ks[i]) ? +ks[i] : ks[i]; if (t[k] == null) t[k] = {}; t = t[k]; } t[ks[ks.length - 1]] = val; }
+function bagShapeFromDraft(dp){
+  const g = k => { const p = dp.params[k]; const v = p && p.s ? parseNum(p.s) : NaN; return v > 0 ? {v, u: p.u} : null; };
+  const sh = {type:'bagBody', tw:g('tw'), bw:g('bw'), bh:g('bh'), handles: []};
+  const r = g('r'), ri = g('ri'); if (r) sh.r = r; if (ri) sh.ri = ri;
+  (dp.handles || []).forEach(h => { const o = {pos: h.pos, w: {v: parseNum(h.w.s), u: h.w.u}, h: {v: parseNum(h.h.s), u: h.h.u}};
+    if (h.pos === 'x') o.x = {v: parseNum(h.x.s), u: h.x.u}; sh.handles.push(o); });
+  return sh;
+}
+function bagDraftError(dp, nm){
+  const pre = nm ? nm + ': ' : '';
+  for (const [k, label, opt] of BAG_FIELDS) { const raw = dp.params[k] && dp.params[k].s;
+    if (!opt && !(parseNum(raw) > 0)) return pre + 'enter ' + label.toLowerCase() + '.';
+    if (opt && raw && !(parseNum(raw) >= 0)) return pre + label.replace(/ \(.*\)/, '').toLowerCase() + ' must be a number.'; }
+  for (let j = 0; j < (dp.handles || []).length; j++) { const h = dp.handles[j];
+    if (!(parseNum(h.w.s) > 0) || !(parseNum(h.h.s) > 0)) return pre + 'enter the width and height of handle ' + (j + 1) + '.';
+    if (h.pos === 'x' && !(parseNum(h.x.s) >= 0)) return pre + 'enter where handle ' + (j + 1) + ' starts, measured from the left edge of the body top.'; }
+  const e = E.bagError(bagShapeFromDraft(dp)); return e ? pre + e : '';
+}
+function bagSummary(dp){
+  if (bagDraftError(dp, '')) return 'Enter the sizes to see the overall size.';
+  const sh = bagShapeFromDraft(dp), z = E.bagSize(sh), u = draft.unit, f = u === 'cm' ? 2.54 : 1;
+  const fm = v => E.fmt({v: +(v * f).toFixed(2), u});
+  const tw = E.toIn(sh.tw), x0 = (Math.max(tw, E.toIn(sh.bw)) - tw) / 2;
+  const hs = sh.handles.map(h => { const w = E.toIn(h.w); const x = h.pos === 'right' ? tw - w : h.pos === 'center' ? (tw - w) / 2 : h.pos === 'x' ? E.toIn(h.x) : 0; return [x, x + w]; }).sort((a, b) => a[0] - b[0]);
+  const gaps = []; for (let i = 1; i < hs.length; i++) gaps.push(hs[i][0] - hs[i - 1][1]);
+  return `Overall size: ${fm(z.w)} x ${fm(z.h)}. Compare with the sheet.` + (gaps.length ? ` Gap between handles: ${gaps.map(fm).join(', ')}.` : '');
+}
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 let pdfjsReady = null;
 function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
@@ -1159,8 +1277,17 @@ function layoutSVG(prod){
 
 /* ---------- geometry checks ---------- */
 function fieldsFor(p){
-  const f = [{k:'w', label:'Width', d:p.w}, {k:'h', label:'Height', d:p.h}];
   const s = p.shape;
+  if (s.type === 'bagBody') {
+    const u = s.tw.u, f2 = BAG_FIELDS.map(([k, label, opt]) => ({k: 'shape.' + k, label: label.replace(/ \(.*\)/, ''), d: s[k] || {v: 0, u}, hint: opt ? '0 = square' : ''}));
+    (s.handles || []).forEach((h, i) => {
+      if (h.pos === 'x') f2.push({k: `shape.handles.${i}.x`, label: `Handle ${i + 1} from left`, d: h.x});
+      f2.push({k: `shape.handles.${i}.w`, label: `Handle ${i + 1} width`, d: h.w});
+      f2.push({k: `shape.handles.${i}.h`, label: `Handle ${i + 1} height`, d: h.h});
+    });
+    return f2;
+  }
+  const f = [{k:'w', label:'Width', d:p.w}, {k:'h', label:'Height', d:p.h}];
   if (s.type === 'archTop') f.push({k:'shape.ah', label:'Curve height (top)', d:s.ah || {v:+(p.w.v/2).toFixed(3), u:p.w.u}, hint:'Half circle = half the width'});
   if (s.type === 'notchBottom') { f.push({k:'shape.nw', label:'Corner cut-out width', d:s.nw}); f.push({k:'shape.nh', label:'Corner cut-out height', d:s.nh}); }
   if (s.type === 'rect' || s.type === 'roundBottom') f.push({k:'shape.r', label:'Bottom corner radius', d:s.r || {v:0, u:p.w.u}, hint:'0 = square corners'});
@@ -1205,6 +1332,13 @@ async function savePiece(prod, pieceId, values, note){
     if (v !== n) { cuts[m] = v; changed.push(`${E.mat(m).name} qty ${n} to ${v}`); }
   });
   if (Object.keys(cuts).length) rec.cuts = cuts;
+  if (base.shape.type === 'bagBody' && rec.shape) {
+    const merged = JSON.parse(JSON.stringify(base.shape));
+    Object.entries(rec.shape).forEach(([k, d]) => setPathObj(merged, k, d));
+    ['r', 'ri'].forEach(k => { if (merged[k] && !(merged[k].v > 0)) delete merged[k]; });
+    const z = E.bagSize(merged), f = base.w.u === 'cm' ? 2.54 : 1;
+    rec.shape = merged; rec.w = {v: +(z.w * f).toFixed(2), u: base.w.u}; rec.h = {v: +(z.h * f).toFixed(2), u: base.h.u};
+  }
   const ref = db.collection('overrides').doc(docId(prod.id, pieceId));
   if (!rec.w && !rec.h && !rec.shape && !rec.cuts) await ref.delete(); else await ref.set(rec);
   const piece = prod.pieces.find(p => p.id === pieceId);
@@ -1255,7 +1389,7 @@ function parseNum(str){
   return /^\d+(\.\d+)?$/.test(s) ? +s : NaN;
 }
 const dimStr = d => d ? E.fmt(d).replace(/"$/, '').replace(/ cm$/, '') : '';
-function emptyPiece(unit){ return {id: 'p' + rid(), name:'', shape:'rect', w:{s:'',u:unit}, h:{s:'',u:unit}, params:{}, cuts:[{m:'kitenge', q:'1'}], note:'', flag:''}; }
+function emptyPiece(unit){ return {id: 'p' + rid(), name:'', shape:'rect', w:{s:'',u:unit}, h:{s:'',u:unit}, params:{}, handles:[], cuts:[{m:'kitenge', q:'1'}], note:'', flag:''}; }
 function toDraft(p){
   if (!p) return {mode:'new', name:'', category:'', unit:'in', source:'', photo:null, newPhoto:null,
     pieces:[emptyPiece('in')], sub:[], flags:[], materials:{}, errors:[]};
@@ -1263,7 +1397,9 @@ function toDraft(p){
     pieces: p.pieces.map(x => {
       const params = {};
       (SHAPES[x.shape.type] || SHAPES.rect).params.forEach(([k]) => { if (x.shape[k]) params[k] = {s: dimStr(x.shape[k]), u: x.shape[k].u}; });
-      return {id:x.id, name:x.name, shape: SHAPES[x.shape.type] ? x.shape.type : 'rect', w:{s:dimStr(x.w), u:x.w.u}, h:{s:dimStr(x.h), u:x.h.u}, params,
+      if (x.shape.type === 'bagBody') BAG_FIELDS.forEach(([k]) => { if (x.shape[k]) params[k] = {s: dimStr(x.shape[k]), u: x.shape[k].u}; });
+      const handles = x.shape.type === 'bagBody' ? (x.shape.handles || []).map(h => ({pos: h.pos, x: h.x ? {s: dimStr(h.x), u: h.x.u} : {s: '', u: h.w.u}, w: {s: dimStr(h.w), u: h.w.u}, h: {s: dimStr(h.h), u: h.h.u}})) : [];
+      return {id:x.id, name:x.name, shape: SHAPES[x.shape.type] ? x.shape.type : 'rect', w:{s:dimStr(x.w), u:x.w.u}, h:{s:dimStr(x.h), u:x.h.u}, params, handles,
         cuts: x.cuts.map(([m, n]) => ({m, q: String(n)})), note: x.note || '', flag: x.flag || '', pts: x.shape.type === 'custom' ? x.shape.pts : undefined};
     }),
     sub: (p.sub || []).map(([n, s, q]) => ({n, s, q:String(q)})),
@@ -1276,6 +1412,11 @@ function inchOf(dp){
   return r;
 }
 function draftPiece(dp){
+  if (dp.shape === 'bagBody') {
+    if (bagDraftError(dp, '')) return null;
+    const sh = bagShapeFromDraft(dp), z = E.bagSize(sh);
+    return {id: dp.id, name: dp.name || 'Piece', w: {v: z.w, u: 'in'}, h: {v: z.h, u: 'in'}, shape: sh, cuts: [[dp.cuts[0] && dp.cuts[0].m !== '__new' ? dp.cuts[0].m : 'x', 1]]};
+  }
   const w = parseNum(dp.w.s), h = parseNum(dp.h.s);
   if (!(w > 0 && h > 0)) return null;
   if (geomError(dp.shape, inchOf(dp), '')) return null;
@@ -1297,6 +1438,23 @@ function previewHTML(dp){
   const pv = draftPiece(dp);
   return pv ? E.svg(pv, draft.unit, {grid:false, pad:0.25}) : '<span class="muted small">Enter valid sizes to see the shape</span>';
 }
+function numField(path, label, d, hint){
+  return `<label><span>${esc(label)}</span><div class="nu"><input data-b="${path}.s" value="${esc(d.s)}" inputmode="decimal">${unitSel(path + '.u', d.u)}</div>${hint ? `<small class="muted">${esc(hint)}</small>` : ''}</label>`;
+}
+function bagHTML(dp, i){
+  const u = draft.unit;
+  return `<div class="dims">${BAG_FIELDS.map(([k, label]) => numField(`pieces.${i}.params.${k}`, label, dp.params[k] || {s: '', u})).join('')}</div>
+    <div class="handles"><span class="lbl2">Handles / tabs on top of the body</span>
+    ${(dp.handles || []).map((h, j) => `<div class="hrow">
+      <label><span>Handle ${j + 1}</span><select data-hpos="${i}.${j}">${Object.entries(HPOS).map(([k, t]) => `<option value="${k}" ${h.pos === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      ${h.pos === 'x' ? numField(`pieces.${i}.handles.${j}.x`, 'From left', h.x) : ''}
+      ${numField(`pieces.${i}.handles.${j}.w`, 'Width', h.w)}
+      ${numField(`pieces.${i}.handles.${j}.h`, 'Height above body', h.h)}
+      <button type="button" class="iconbtn" data-rmh="${i}.${j}" aria-label="Remove handle ${j + 1}">×</button>
+    </div>`).join('')}
+    <button type="button" class="linkbtn" data-addh="${i}">+ Add handle / tab</button></div>
+    <p class="bagsum" data-bagsum="${i}">${esc(bagSummary(dp))}</p>`;
+}
 function pieceCardHTML(dp, i){
   const mats = allMaterials();
   return `<fieldset class="pc" data-pi="${i}">
@@ -1308,12 +1466,12 @@ function pieceCardHTML(dp, i){
           <label><span>Shape</span><select data-shape="${i}">${Object.entries(SHAPES).filter(([k]) => k !== 'custom' || dp.pts).map(([k, s]) => `<option value="${k}" ${dp.shape===k?'selected':''}>${esc(s.label)}</option>`).join('')}</select></label>
         </div>
         ${dp.shape === 'custom' ? `<p class="muted small">Imported from ${esc(dp.src || 'a file')}. Changing width or height stretches the shape.</p>` : ''}
-        <div class="dims">
+        ${dp.shape === 'bagBody' ? bagHTML(dp, i) : `<div class="dims">
           <label><span>Width</span><div class="nu"><input data-b="pieces.${i}.w.s" value="${esc(dp.w.s)}" inputmode="decimal" placeholder="13 or 6 3/4">${unitSel(`pieces.${i}.w.u`, dp.w.u)}</div></label>
           <label><span>Height</span><div class="nu"><input data-b="pieces.${i}.h.s" value="${esc(dp.h.s)}" inputmode="decimal">${unitSel(`pieces.${i}.h.u`, dp.h.u)}</div></label>
           ${SHAPES[dp.shape].params.map(([k, label]) => { const pv2 = dp.params[k] || {s:'', u: dp.w.u};
             return `<label><span>${esc(label)}</span><div class="nu"><input data-b="pieces.${i}.params.${k}.s" value="${esc(pv2.s)}" inputmode="decimal">${unitSel(`pieces.${i}.params.${k}.u`, pv2.u)}</div></label>`; }).join('')}
-        </div>
+        </div>`}
         <div class="mats"><span class="lbl2">Cut from</span>
           ${dp.cuts.map((c, j) => `<div class="mrow">
             <select data-mat="${i}.${j}" aria-label="Material">${Object.entries(mats).map(([k, m]) => `<option value="${k}" ${c.m===k?'selected':''}>${esc(m.name)}</option>`).join('')}<option value="__new" ${c.m==='__new'?'selected':''}>New material...</option></select>
@@ -1386,7 +1544,8 @@ function setPath(obj, path, val){
   for (let i = 0; i < ks.length - 1; i++) { const k = /^\d+$/.test(ks[i]) ? +ks[i] : ks[i]; if (o[k] == null) o[k] = {}; o = o[k]; }
   o[ks[ks.length - 1]] = val;
 }
-function updatePreview(i){ const box = document.querySelector(`[data-prev="${i}"]`); if (box) box.innerHTML = previewHTML(draft.pieces[i]); }
+function updatePreview(i){ const box = document.querySelector(`[data-prev="${i}"]`); if (box) box.innerHTML = previewHTML(draft.pieces[i]);
+  const sm = document.querySelector(`[data-bagsum="${i}"]`); if (sm) sm.textContent = bagSummary(draft.pieces[i]); }
 function wireForm(){
   const app = $('#app');
   app.querySelectorAll('[data-b]').forEach(el => {
@@ -1404,7 +1563,14 @@ function wireForm(){
   app.querySelectorAll('[data-u]').forEach(el => el.addEventListener('change', () => {
     setPath(draft, el.dataset.u, el.value); const m = el.dataset.u.match(/^pieces\.(\d+)\./); if (m) updatePreview(+m[1]);
   }));
-  app.querySelectorAll('[data-shape]').forEach(el => el.addEventListener('change', () => { draft.pieces[+el.dataset.shape].shape = el.value; renderForm(); }));
+  app.querySelectorAll('[data-shape]').forEach(el => el.addEventListener('change', () => {
+    const dp = draft.pieces[+el.dataset.shape]; dp.shape = el.value;
+    if (el.value === 'bagBody' && !(dp.handles && dp.handles.length)) {
+      const e = () => ({s: '', u: draft.unit});
+      dp.handles = [{pos: 'left', x: e(), w: e(), h: e()}, {pos: 'right', x: e(), w: e(), h: e()}];
+    }
+    renderForm(); }));
+  app.querySelectorAll('[data-hpos]').forEach(el => el.addEventListener('change', () => { const [i, j] = el.dataset.hpos.split('.').map(Number); draft.pieces[i].handles[j].pos = el.value; renderForm(); }));
   app.querySelectorAll('[data-mat]').forEach(el => el.addEventListener('change', () => {
     const [i, j] = el.dataset.mat.split('.').map(Number); draft.pieces[i].cuts[j].m = el.value; renderForm();
   }));
@@ -1416,6 +1582,8 @@ function wireForm(){
   on('[data-addcut]', el => { draft.pieces[+el.dataset.addcut].cuts.push({m:'stiff', q:'1'}); });
   on('[data-rmcut]', el => { const [i, j] = el.dataset.rmcut.split('.').map(Number); draft.pieces[i].cuts.splice(j, 1); });
   on('[data-addsub]', () => { draft.sub.push({n:'', s:'', q:'1'}); });
+  on('[data-addh]', el => { const e = () => ({s: '', u: draft.unit}); const dp = draft.pieces[+el.dataset.addh]; (dp.handles = dp.handles || []).push({pos: 'center', x: e(), w: e(), h: e()}); });
+  on('[data-rmh]', el => { const [i, j] = el.dataset.rmh.split('.').map(Number); draft.pieces[i].handles.splice(j, 1); });
   on('[data-rmsub]', el => { draft.sub.splice(+el.dataset.rmsub, 1); });
   on('[data-addflag]', () => { draft.flags.push(''); });
   on('[data-rmflag]', el => { draft.flags.splice(+el.dataset.rmflag, 1); });
@@ -1466,6 +1634,11 @@ function buildProduct(){
   const pieces = d.pieces.map((dp, i) => {
     const nm = dp.name.trim() || `Piece ${i + 1}`;
     if (!dp.name.trim()) errs.push(`Piece ${i + 1}: enter a piece name.`);
+    if (dp.shape === 'bagBody') {
+      const be = bagDraftError(dp, nm); if (be) { errs.push(be); return null; }
+      const z = E.bagSize(bagShapeFromDraft(dp)), f = d.unit === 'cm' ? 2.54 : 1;
+      dp.w = {s: String(+(z.w * f).toFixed(2)), u: d.unit}; dp.h = {s: String(+(z.h * f).toFixed(2)), u: d.unit};
+    }
     const w = parseNum(dp.w.s), h = parseNum(dp.h.s);
     if (!(w > 0) || !(h > 0)) { errs.push(`${nm}: enter width and height as numbers (e.g. 13, 6.75 or 6 3/4).`); return null; }
     let paramErr = false;
@@ -1491,6 +1664,7 @@ function buildProduct(){
     });
     if (!cuts.length) errs.push(`${nm}: add at least one material.`);
     const shape = {type: dp.shape};
+    if (dp.shape === 'bagBody') Object.assign(shape, bagShapeFromDraft(dp));
     if (dp.shape === 'custom') { if (dp.pts) shape.pts = dp.pts; else errs.push(`${nm}: the imported shape is missing. Choose another shape or import again.`); }
     SHAPES[dp.shape].params.forEach(([k]) => { const p = dp.params[k]; const v = p ? parseNum(p.s) : NaN; if (v > 0) shape[k] = {v, u: p.u}; });
     const out = {id: dp.id, name: nm, w: {v: w, u: dp.w.u}, h: {v: h, u: dp.h.u}, shape, cuts};
@@ -1612,7 +1786,18 @@ function wireImport(){
   };
 }
 
+function normalizeDraft(){
+  // every size field must carry its unit before anything is typed into it
+  if (!draft) return;
+  draft.pieces.forEach(dp => {
+    dp.params = dp.params || {};
+    const keys = SHAPES[dp.shape].params.map(p => p[0]).concat(dp.shape === 'bagBody' ? BAG_FIELDS.map(p => p[0]) : []);
+    keys.forEach(k => { if (!dp.params[k]) dp.params[k] = {s: '', u: dp.w.u || draft.unit}; else if (!dp.params[k].u) dp.params[k].u = draft.unit; });
+    (dp.handles || []).forEach(h => ['x', 'w', 'h'].forEach(k => { if (!h[k]) h[k] = {s: '', u: draft.unit}; else if (!h[k].u) h[k].u = draft.unit; }));
+  });
+}
 function renderForm(){
+  normalizeDraft();
   const y = window.scrollY;
   renderTop(); $('#app').innerHTML = productFormHTML(); wireForm(); wireImport();
   window.scrollTo({top: y});
@@ -1741,7 +1926,7 @@ function detailHTML(prod, piece, ck, ed, dlOk){
     return `<section class="detail"><h2>Change values: ${esc(piece.name)}</h2>
       <p class="dimline">The original value is shown under each field. Use the unit shown.</p>
       <div class="fgrid">
-      ${fieldsFor(base).map(f => { const v = f.k.startsWith('shape.') ? (piece.shape[f.k.slice(6)] || f.d) : piece[f.k];
+      ${fieldsFor(base).map(f => { const v = f.k.startsWith('shape.') ? (getPath(piece.shape, f.k.slice(6)) || f.d) : piece[f.k];
         return `<label><span>${esc(f.label)} <span class="u">(${f.d.u === 'cm' ? 'cm' : 'inch'})</span></span>
           <input type="number" step="any" min="0" inputmode="decimal" data-f="${f.k}" value="${+v.v}">
           <small>Original: ${esc(E.fmt(f.d))}${f.hint ? '. ' + esc(f.hint) : ''}</small></label>`; }).join('')}
@@ -1821,8 +2006,15 @@ function wire(prod, piece, open, all){
         if (i.value === '' || isNaN(v) || v < 0) bad = 'Enter a number of 0 or more in every field.'; });
       const base = baseOf(prod.id).pieces.find(p => p.id === form.pieceId);
       if (!bad) {
-        const inch = {}; fieldsFor(base).forEach(f => { inch[f.k.replace('shape.', '')] = vals[f.k] * (f.d.u === 'cm' ? 1/2.54 : 1); });
-        bad = geomError(base.shape.type, inch, '');
+        if (base.shape.type === 'bagBody') {
+          const merged = JSON.parse(JSON.stringify(base.shape));
+          fieldsFor(base).forEach(f => setPathObj(merged, f.k.slice(6), {v: vals[f.k], u: f.d.u}));
+          ['r', 'ri'].forEach(k => { if (merged[k] && !(merged[k].v > 0)) delete merged[k]; });
+          bad = E.bagError(merged);
+        } else {
+          const inch = {}; fieldsFor(base).forEach(f => { inch[f.k.replace('shape.', '')] = vals[f.k] * (f.d.u === 'cm' ? 1/2.54 : 1); });
+          bad = geomError(base.shape.type, inch, '');
+        }
         for (const k in vals) if (k.startsWith('cut.') && !Number.isInteger(vals[k])) bad = 'Quantities must be whole numbers.';
       }
       if (bad) { $('#ferr').textContent = bad.charAt(0).toUpperCase() + bad.slice(1); return; }
