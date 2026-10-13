@@ -153,6 +153,8 @@ td.n{text-align:right;font-weight:600}
 
 .pill.ok{background:#DCF5E4;color:#14602F}
 .actrow{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.layoutsel{display:flex;align-items:center;gap:8px;justify-content:flex-end;margin-top:8px;font-size:14px;color:var(--muted)}
+.layoutsel select{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;max-width:100%}
 .btn.edit-on{background:#14602F;color:#fff}
 .btn.sm{height:36px;padding:0 12px;font-size:14px}
 .btn.ghost{background:none;color:var(--muted);text-decoration:underline;padding:0 8px}
@@ -634,77 +636,150 @@ dialog.viewer img{max-width:86vw;max-height:72vh}
 
   /* ---------- PDF (true scale, unit = inch) ---------- */
   const M = { l: 1.0, r: 0.7, t: 2.1, b: 1.95 };
-  function drawPiecePage(doc, prod, p, first, st) {
+  function pieceGeom(p, st) {
     const w = toIn(p.w), h = toIn(p.h);
     const res = st.checks[p.id];
     const openFlag = p.flag && !res ? p.flag : null;
     const top = M.t + (openFlag ? 0.55 : 0);
-    const pw = Math.max(w + M.l + M.r, 7), ph = h + top + M.b;
-    const orient = pw > ph ? 'l' : 'p';
-    doc.addPage([pw, ph], orient);
-    if (first) doc.deletePage(1);
+    return { w, h, res, openFlag, top, pw: Math.max(w + M.l + M.r, 7), ph: h + top + M.b };
+  }
+  // drawer that shifts every coordinate by (dx, dy); everything else goes straight to the document
+  function shifted(doc, dx, dy) {
+    return {
+      text: (t, x, y, o) => doc.text(t, x + dx, y + dy, o),
+      line: (x1, y1, x2, y2) => doc.line(x1 + dx, y1 + dy, x2 + dx, y2 + dy),
+      rect: (x, y, rw, rh, style) => doc.rect(x + dx, y + dy, rw, rh, style),
+      setFont: (...a) => doc.setFont(...a), setFontSize: (v) => doc.setFontSize(v), setTextColor: (...a) => doc.setTextColor(...a),
+      setDrawColor: (...a) => doc.setDrawColor(...a), setLineWidth: (v) => doc.setLineWidth(v),
+      splitTextToSize: (t, wd) => doc.splitTextToSize(t, wd),
+    };
+  }
+  function drawPieceBody(d, prod, p, st, g) {
+    const { w, h, res, openFlag, top, pw } = g;
     const ox = M.l, oy = top;
     const P = ([x, y]) => [ox + x, oy + (h - y)];
     const unit = prod.unit, step = unit === 'cm' ? CM : 1;
 
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(20);
-    doc.text(prod.name + ' - ' + p.name, 0.6, 0.6);
-    doc.setFontSize(9);
-    if (st.open > 0) { doc.setTextColor(185, 28, 28); doc.text('DRAFT: product has ' + st.open + ' unconfirmed item(s)', pw - 0.6, 0.6, { align: 'right' }); }
-    else { doc.setTextColor(21, 128, 61); doc.text('VERIFIED', pw - 0.6, 0.6, { align: 'right' }); }
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(40);
-    doc.text('Size: ' + sizeText(p) + '     Cut: ' + cutText(p), 0.6, 0.92);
-    if (p.note) doc.text(doc.splitTextToSize(p.note, pw - 1.2), 0.6, 1.15);
+    d.setFont('helvetica', 'bold'); d.setFontSize(17); d.setTextColor(20);
+    d.text(prod.name + ' - ' + p.name, 0.6, 0.6);
+    d.setFontSize(9);
+    if (st.open > 0) { d.setTextColor(185, 28, 28); d.text('DRAFT: product has ' + st.open + ' unconfirmed item(s)', pw - 0.6, 0.6, { align: 'right' }); }
+    else { d.setTextColor(21, 128, 61); d.text('VERIFIED', pw - 0.6, 0.6, { align: 'right' }); }
+    d.setFont('helvetica', 'normal'); d.setFontSize(10.5); d.setTextColor(40);
+    d.text('Size: ' + sizeText(p) + '     Cut: ' + cutText(p), 0.6, 0.92);
+    if (p.note) d.text(d.splitTextToSize(p.note, pw - 1.2), 0.6, 1.15);
     if (openFlag) {
-      doc.setTextColor(185, 28, 28); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-      doc.text(doc.splitTextToSize('CHECK: ' + openFlag, pw - 1.2), 0.6, 1.62);
+      d.setTextColor(185, 28, 28); d.setFont('helvetica', 'bold'); d.setFontSize(9.5);
+      d.text(d.splitTextToSize('CHECK: ' + openFlag, pw - 1.2), 0.6, 1.62);
     } else if (res) {
-      doc.setTextColor(21, 128, 61); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      doc.text(doc.splitTextToSize((res.status === 'corrected' ? 'Corrected' : 'Confirmed') + ' ' + dateStr(res.at) +
+      d.setTextColor(21, 128, 61); d.setFont('helvetica', 'normal'); d.setFontSize(9);
+      d.text(d.splitTextToSize((res.status === 'corrected' ? 'Corrected' : 'Confirmed') + ' ' + dateStr(res.at) +
         (res.byName ? ' by ' + res.byName : '') + (res.note ? ': ' + res.note : ''), pw - 1.2), 0.6, 1.62);
     }
-    doc.setLineWidth(0.006);
+    d.setLineWidth(0.006);
     const nx = Math.floor(w / step + 1e-6), ny = Math.floor(h / step + 1e-6);
-    doc.setFontSize(6.5); doc.setTextColor(140); doc.setFont('helvetica', 'normal');
+    d.setFontSize(6.5); d.setTextColor(140); d.setFont('helvetica', 'normal');
     for (let i = 0; i <= nx; i++) {
       const x = ox + i * step, major = unit === 'in' || i % 5 === 0 || nx <= 20;
-      doc.setDrawColor(major ? 200 : 228); doc.line(x, oy, x, oy + h);
-      if (major) doc.text(i + (unit === 'in' ? '"' : ''), x, oy + h + 0.16, { align: 'center' });
+      d.setDrawColor(major ? 200 : 228); d.line(x, oy, x, oy + h);
+      if (major) d.text(i + (unit === 'in' ? '"' : ''), x, oy + h + 0.16, { align: 'center' });
     }
     for (let j = 0; j <= ny; j++) {
       const y = oy + h - j * step, major = unit === 'in' || j % 5 === 0 || ny <= 20;
-      doc.setDrawColor(major ? 200 : 228); doc.line(ox, y, ox + w, y);
-      if (major) doc.text(j + (unit === 'in' ? '"' : ''), ox - 0.08, y + 0.03, { align: 'right' });
+      d.setDrawColor(major ? 200 : 228); d.line(ox, y, ox + w, y);
+      if (major) d.text(j + (unit === 'in' ? '"' : ''), ox - 0.08, y + 0.03, { align: 'right' });
     }
-    if (unit === 'cm') doc.text('cm', ox - 0.08, oy + h + 0.16, { align: 'right' });
+    if (unit === 'cm') d.text('cm', ox - 0.08, oy + h + 0.16, { align: 'right' });
     const pts = outline(p).map(P);
-    doc.setDrawColor(0); doc.setLineWidth(0.02);
-    for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; doc.line(a[0], a[1], b[0], b[1]); }
-    doc.setTextColor(30); doc.setFont('helvetica', 'bold');
+    d.setDrawColor(0); d.setLineWidth(0.02);
+    for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; d.line(a[0], a[1], b[0], b[1]); }
+    d.setTextColor(30); d.setFont('helvetica', 'bold');
     const fs = Math.max(6, Math.min(12, Math.min(w, h) * 8));
-    doc.setFontSize(fs);
+    d.setFontSize(fs);
     const cx = ox + w / 2, cy = oy + h / 2;
-    if (w < 1.0 && h > 3) doc.text(p.name, cx + 0.05, cy, { angle: 90, align: 'center' });
+    if (w < 1.0 && h > 3) d.text(p.name, cx + 0.05, cy, { angle: 90, align: 'center' });
     else {
-      doc.text(p.name, cx, cy, { align: 'center' });
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(fs * 0.8);
-      if (h > 0.9) doc.text(cutText(p), cx, cy + fs / 60, { align: 'center' });
+      d.text(p.name, cx, cy, { align: 'center' });
+      d.setFont('helvetica', 'normal'); d.setFontSize(fs * 0.8);
+      if (h > 0.9) d.text(cutText(p), cx, cy + fs / 60, { align: 'center' });
     }
     const sq = unit === 'cm' ? 3 * CM : 1;
     const sqTop = oy + h + 0.5, fy = sqTop + 0.1;
-    doc.setDrawColor(0); doc.setLineWidth(0.012);
-    doc.rect(0.6, sqTop, sq, sq);
-    doc.setFontSize(7.5); doc.setTextColor(60); doc.setFont('helvetica', 'normal');
-    doc.text('Scale check: this square must measure exactly ' + (unit === 'cm' ? '3 cm x 3 cm' : '1" x 1" (2.54 cm)') +
+    d.setDrawColor(0); d.setLineWidth(0.012);
+    d.rect(0.6, sqTop, sq, sq);
+    d.setFontSize(7.5); d.setTextColor(60); d.setFont('helvetica', 'normal');
+    d.text('Scale check: this square must measure exactly ' + (unit === 'cm' ? '3 cm x 3 cm' : '1" x 1" (2.54 cm)') +
       '. Print at 100% / Actual size.', 0.6 + sq + 0.15, fy + 0.15);
-    doc.text('Cutting line only, no seam allowance.' + (prod.source ? ' Source: ' + prod.source + '.' : '') +
+    d.text('Cutting line only, no seam allowance.' + (prod.source ? ' Source: ' + prod.source + '.' : '') +
       (p.edited ? '  Values updated in the library ' + (p.edited === true ? '' : dateStr(p.edited)) + '.' : ''), 0.6 + sq + 0.15, fy + 0.32);
-    doc.text('Downloaded ' + dateStr(new Date().toISOString()) + '.', 0.6 + sq + 0.15, fy + 0.49);
+    d.text('Downloaded ' + dateStr(new Date().toISOString()) + '.', 0.6 + sq + 0.15, fy + 0.49);
+  }
+  function drawPiecePage(doc, prod, p, first, st) {
+    const g = pieceGeom(p, st);
+    doc.addPage([g.pw, g.ph], g.pw > g.ph ? 'l' : 'p');
+    if (first) doc.deletePage(1);
+    drawPieceBody(shifted(doc, 0, 0), prod, p, st, g);
+  }
+
+  /* ---------- split printing: the full-size page cut into A4 / A3 sheets ---------- */
+  const PAPER = { a4: [8.27, 11.69], a3: [11.69, 16.54] };
+  const TM = 0.45, OV = 0.5;   // sheet margin and overlap between sheets (inches)
+  function tilePlan(g, paper) {
+    const opts = [paper, [paper[1], paper[0]]].map(([W, H]) => {
+      const cw = W - 2 * TM, ch = H - 2 * TM;
+      const cols = Math.max(1, Math.ceil((g.pw - OV) / (cw - OV) - 1e-6)), rows = Math.max(1, Math.ceil((g.ph - OV) / (ch - OV) - 1e-6));
+      return { W, H, cw, ch, cols, rows, n: cols * rows };
+    });
+    return opts[1].n < opts[0].n ? opts[1] : opts[0];
+  }
+  const ROW = (r) => String.fromCharCode(65 + r);
+  function drawPieceTiles(doc, prod, p, first, st, paper) {
+    const g = pieceGeom(p, st), t = tilePlan(g, paper);
+    // centre the full page on the sheet grid so the spare space is shared out evenly
+    const spanW = t.cols * (t.cw - OV) + OV, spanH = t.rows * (t.ch - OV) + OV;
+    const offX = (spanW - g.pw) / 2, offY = (spanH - g.ph) / 2;
+    let firstPage = first;
+    for (let r = 0; r < t.rows; r++) for (let c = 0; c < t.cols; c++) {
+      doc.addPage([t.W, t.H], t.W > t.H ? 'l' : 'p');
+      if (firstPage) { doc.deletePage(1); firstPage = false; }
+      const x0 = c * (t.cw - OV) - offX, y0 = r * (t.ch - OV) - offY;   // window on the full page
+      doc.saveGraphicsState();
+      doc.rect(TM, TM, t.cw, t.ch, null); doc.clip(); doc.discardPath();
+      drawPieceBody(shifted(doc, TM - x0, TM - y0), prod, p, st, g);
+      doc.restoreGraphicsState();
+      // sheet frame, join lines and labels
+      doc.setLineWidth(0.01); doc.setDrawColor(150); doc.setLineDashPattern([], 0);
+      doc.rect(TM, TM, t.cw, t.ch);
+      doc.setLineDashPattern([0.08, 0.06], 0); doc.setDrawColor(90); doc.setLineWidth(0.012);
+      const jl = TM + OV / 2, jr = TM + t.cw - OV / 2, jt = TM + OV / 2, jb = TM + t.ch - OV / 2;
+      if (c > 0) doc.line(jl, TM, jl, TM + t.ch);
+      if (c < t.cols - 1) doc.line(jr, TM, jr, TM + t.ch);
+      if (r > 0) doc.line(TM, jt, TM + t.cw, jt);
+      if (r < t.rows - 1) doc.line(TM, jb, TM + t.cw, jb);
+      doc.setLineDashPattern([], 0);
+      // alignment crosses on the join lines (same places on both sheets)
+      doc.setDrawColor(0); doc.setLineWidth(0.01);
+      const cross = (x, y) => { doc.line(x - 0.1, y, x + 0.1, y); doc.line(x, y - 0.1, x, y + 0.1); };
+      for (let yy = TM + 1; yy < TM + t.ch - 0.6; yy += 2) { if (c > 0) cross(jl, yy); if (c < t.cols - 1) cross(jr, yy); }
+      for (let xx = TM + 1; xx < TM + t.cw - 0.6; xx += 2) { if (r > 0) cross(xx, jt); if (r < t.rows - 1) cross(xx, jb); }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(60);
+      const id = ROW(r) + (c + 1);
+      doc.text(prod.name + ' - ' + p.name + '   Sheet ' + id + '  (' + t.rows + ' row' + (t.rows > 1 ? 's' : '') + ' x ' + t.cols + ' column' + (t.cols > 1 ? 's' : '') + ')', TM, TM - 0.12);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(90);
+      const tips = [];
+      if (c > 0) tips.push('Cut on the left dashed line and lay over sheet ' + ROW(r) + c + '.');
+      if (r > 0) tips.push('Cut on the top dashed line and lay over sheet ' + ROW(r - 1) + (c + 1) + '.');
+      if (t.n > 1) tips.push('Match the dashed lines and + marks, then tape.');
+      tips.push('Print at 100% / Actual size.');
+      doc.text(tips.join('  '), TM, t.H - TM + 0.2);
+    }
+    return t;
   }
 
   function drawCover(doc, prod, st) {
     let y;
-    const need = (dy) => { if (y + dy > 10.4) { doc.addPage('letter', 'p'); y = 0.9; } };
+    const pageH = st.layout === 'a3' ? 16.54 : st.layout === 'a4' ? 11.69 : 11, pageFmt = st.layout === 'a3' || st.layout === 'a4' ? st.layout : 'letter';
+    const need = (dy) => { if (y + dy > pageH - 0.6) { doc.addPage(pageFmt, 'p'); y = 0.9; } };
     doc.setFont('helvetica', 'bold'); doc.setFontSize(22); doc.setTextColor(20);
     doc.text(prod.name, 0.8, 0.95);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(13); doc.setTextColor(50);
@@ -762,23 +837,31 @@ dialog.viewer img{max-width:86vw;max-height:72vh}
     y += 0.2; need(1.1);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20); doc.text('How to print', 0.8, y); y += 0.26;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(40);
-    ['Each piece has its own page at full size. Print on a plotter or large-format printer at 100% (Actual size), no "fit to page".',
-      'Measure the scale-check square at the bottom of each page before cutting.',
+    (st.sheets ? ['Each piece is split onto ' + st.layout.toUpperCase() + ' sheets. Print on ' + st.layout.toUpperCase() + ' paper at 100% (Actual size), no "fit to page".',
+      'Sheets: ' + st.sheets.map((x) => x.p.name + ' ' + x.t.n + (x.t.n > 1 ? ' (' + x.t.rows + ' x ' + x.t.cols + ')' : '')).join(', ') + '. Sheet names (A1, A2, B1...) are printed at the top of each sheet: letter = row, number = column.',
+      'To join: cut each sheet on its left / top dashed line, lay it over the sheet before it so the dashed lines and + marks match, then tape.',
+      'Measure the scale-check square (on the sheet that holds the bottom of the page) before cutting.'] :
+     ['Each piece has its own page at full size. Print on a plotter or large-format printer at 100% (Actual size), no "fit to page".',
+      'Measure the scale-check square at the bottom of each page before cutting.']).concat([
       'Lines are finished cutting lines. Seam allowance is NOT added.',
-      'All sizes come from the numbers written in the PPT or confirmed in the library. Drawing size and proportions in the PPT are not used.'].forEach((t) => {
+      'All sizes come from the numbers written in the PPT or confirmed in the library. Drawing size and proportions in the PPT are not used.']).forEach((t) => {
       const l = doc.splitTextToSize('- ' + t, 6.8); need(l.length * 0.17); doc.text(l, 0.8, y); y += l.length * 0.17 + 0.05;
     });
   }
 
   // state: { checks: { key: {status, note, at, byName} } }
-  function buildPDF(jsPDF, prod, pieceId, state) {
+  // layout: 'full' (one piece per page, at full size) | 'a4' | 'a3' (each piece split onto sheets of that size)
+  function buildPDF(jsPDF, prod, pieceId, state, layout) {
     const st = { checks: (state && state.checks) || {} };
     st.open = checksOf(prod).filter((c) => !st.checks[c.key]).length;
-    const doc = new jsPDF({ unit: 'in', format: 'letter', orientation: 'p', compress: true });
+    const paper = PAPER[layout] || null;
+    st.layout = paper ? layout : 'full';
+    const doc = new jsPDF({ unit: 'in', format: paper || 'letter', orientation: 'p', compress: true });
     doc.setProperties({ title: prod.name + ' pattern', creator: 'SDC Pattern Library' });
     const list = pieceId ? prod.pieces.filter((p) => p.id === pieceId) : prod.pieces;
+    if (paper) st.sheets = list.map((p) => ({ p, t: tilePlan(pieceGeom(p, st), paper) }));
     if (!pieceId) drawCover(doc, prod, st);
-    list.forEach((p, i) => drawPiecePage(doc, prod, p, pieceId && i === 0, st));
+    list.forEach((p, i) => paper ? drawPieceTiles(doc, prod, p, pieceId && i === 0, st, paper) : drawPiecePage(doc, prod, p, pieceId && i === 0, st));
     return doc;
   }
 
@@ -1169,6 +1252,9 @@ downloads = {
 
 /* ---------- who is editing (no login: a name remembered on this device) ---------- */
 const NAME_KEY = 'patternlib.name';
+const LAYOUT_KEY = 'sdc-print-layout';
+function getLayout(){ try { const v = localStorage.getItem(LAYOUT_KEY); return ['full','a4','a3'].includes(v) ? v : 'full'; } catch(e) { return 'full'; } }
+function setLayout(v){ try { localStorage.setItem(LAYOUT_KEY, v); } catch(e) {} }
 function getName(){ try { return localStorage.getItem(NAME_KEY) || ''; } catch(e) { return ''; } }
 function setName(n){ try { localStorage.setItem(NAME_KEY, n); } catch(e) {} }
 function askName(){
@@ -1932,6 +2018,8 @@ function render(){
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
           Download full pattern (PDF)</button>
       </div>
+      <label class="layoutsel">Print on
+        <select id="dlLayout">${[['full','One piece per page (full size)'],['a4','A4 paper, split into sheets'],['a3','A3 paper, split into sheets']].map(([v,t])=>`<option value="${v}" ${getLayout()===v?'selected':''}>${t}</option>`).join('')}</select></label>
       <div class="status" id="st" aria-live="polite"></div>
     </div>
   </div>
@@ -2113,15 +2201,17 @@ function wire(prod, piece, open, all){
     const state = {checks: {}};
     Object.entries(ckFor(prod.id)).forEach(([k, r]) => { state.checks[k] = Object.assign({}, r, {byName: r.by || ''}); });
     const p2 = Object.assign({}, prod); const pd = await photoData(prod); if (pd) p2.photoData = pd;
-    const doc = E.buildPDF(window.jspdf.jsPDF, p2, pieceId, state);
+    const ls = $('#dlLayout'), layout = ls ? ls.value : getLayout();
+    const doc = E.buildPDF(window.jspdf.jsPDF, p2, pieceId, state, layout);
     const baseName = prod.name.replace(/[^A-Za-z0-9]+/g,'_').replace(/^_|_$/g,'') || 'Pattern';
-    const fn = (pieceId ? `${baseName}_${pieceId}` : `${baseName}_Pattern`) + (open.length ? '_DRAFT' : '') + '.pdf';
-    try { await downloads.save({filename: fn, data: doc.output('blob')}); st.textContent = 'Saved ' + fn + '. Print at 100% / Actual size.'; }
+    const fn = (pieceId ? `${baseName}_${pieceId}` : `${baseName}_Pattern`) + (layout === 'full' ? '' : '_' + layout.toUpperCase()) + (open.length ? '_DRAFT' : '') + '.pdf';
+    try { await downloads.save({filename: fn, data: doc.output('blob')}); st.textContent = 'Saved ' + fn + '. Print at 100% / Actual size' + (layout === 'full' ? '.' : ' on ' + layout.toUpperCase() + ' paper.'); }
     catch (e) {
       const c = e && e.code;
       st.textContent = c === 'declined' ? 'Download cancelled.' : c === 'rate_limited' ? 'A save prompt is already open. Finish it, then try again.' : 'Download is not available in this view.';
     }
   }
+  const ls = $('#dlLayout'); if (ls) ls.onchange = () => setLayout(ls.value);
   const a = $('#dlAll'); if (a) a.onclick = () => save(null);
   const o = $('#dlOne'); if (o) o.onclick = () => save(sel);
 }
